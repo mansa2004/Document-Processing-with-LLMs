@@ -211,22 +211,6 @@ flowchart TD
 - pandas (CSV/JSON output)
 - scikit-learn (cosine similarity for semantic search)
 
-## Repository layout
-src/
-├── data_loader.py       # load + normalize + chunk (Task 1)
-├── clause_extraction.py # termination/confidentiality/liability (Part A)
-├── summarization.py     # 100-150 word summary, map-reduce (Part B)
-├── semantic_search.py   # bonus: embedding index + cosine search
-├── llm_client.py        # Groq wrapper w/ retries
-└── pipeline.py          # orchestration, CSV/JSON writer
-run_pipeline.py           # main CLI entry point
-search_clauses.py         # bonus: semantic search CLI
-config.py                 # central settings (model, paths, chunk sizes)
-prompts/                  # clause-extraction & summary prompt templates, few-shot examples
-sample_data/contracts/    # demo contract, no CUAD download needed
-tests/                    # unit tests (no API key required)
-output/                   # results land here (git-ignored)
-
 ## Known Limitations
 
 - Extraction quality has been reviewed qualitatively (see **Sample Output**)
