@@ -36,18 +36,13 @@ pip install -r requirements.txt
 copy .env.example .env   # add your GROQ_API_KEY
 ```
 
-**Windows (cmd.exe)**
-```cmd
-git clone https://github.com/mansa2004/Document-Processing-with-LLMs.git
-cd Document-Processing-with-LLMs
-python -m venv .venv
-.venv\Scripts\activate.bat
-pip install -r requirements.txt
-copy .env.example .env
-```
+> **Using Command Prompt instead of PowerShell?** Replace
+> `.venv\Scripts\Activate.ps1` with `.venv\Scripts\activate.bat`, and write
+> any multi-line command below as a single line (cmd doesn't support the
+> `` ` `` continuation character used in the PowerShell examples).
 
-> **Windows PowerShell note:** if `Activate.ps1` fails with an execution-policy
-> error, run PowerShell as Administrator once and execute:
+> **PowerShell execution-policy error?** If `Activate.ps1` fails to run, open
+> PowerShell as Administrator once and run:
 > ```powershell
 > Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 > ```
@@ -68,7 +63,19 @@ The model can be changed using the `GROQ_MODEL` environment variable.
 
 Download CUAD v1 from the [Atticus Project](https://www.atticusprojectai.org/cuad)
 and point `--input_dir` at the extracted `full_contract_txt/` or
-`full_contract_pdf/` folder (`.txt` is preferred when both exist).
+`full_contract_pdf/` folder.
+
+The loader accepts a mix of `.txt` and `.pdf` files. When both exist for the
+same contract it prefers `.txt` (CUAD's plain-text mirror is already clean,
+so this avoids unnecessary PDF parsing on a full 50-contract run). PDF
+extraction (`pdfplumber`, falling back to `PyPDF2`) is fully implemented and
+used automatically for any contract that only has a `.pdf` available. To
+explicitly exercise and verify the PDF path, point `--input_dir` directly at
+`full_contract_pdf/` instead:
+
+```bash
+python run_pipeline.py --input_dir /path/to/CUAD_v1/full_contract_pdf --limit 3
+```
 
 No download handy? A demo contract ships at
 `sample_data/contracts/DEMO_SoftwareLicenseAgreement.txt` — see the
@@ -80,7 +87,6 @@ Start with a single contract to confirm everything is wired up correctly
 before running the full batch (recommended — avoids burning API quota if
 something's misconfigured):
 
-**macOS / Linux / Windows (PowerShell or cmd.exe)**
 ```bash
 python run_pipeline.py --input_dir sample_data/contracts --output_dir output --limit 1
 ```
@@ -103,10 +109,10 @@ python run_pipeline.py `
     --limit 50
 ```
 
-**Windows (cmd.exe)** — no continuation character needed, just one line:
-```cmd
-python run_pipeline.py --input_dir C:\path\to\CUAD_v1\full_contract_txt --output_dir output --limit 50
-```
+> The 50 contracts processed are simply the first 50 found in `--input_dir`
+> (sorted alphabetically by filename). Use `--limit 0` to process every
+> contract in the folder instead, or point `--input_dir` at a
+> pre-filtered subfolder if you want a specific selection.
 
 The pipeline generates:
 
@@ -163,15 +169,15 @@ python search_clauses.py --contract sample_data/contracts/DEMO_SoftwareLicenseAg
 
 Embeds the contract locally via `sentence-transformers` (no extra API key)
 and returns the top-k passages closest to the query, even without lexical
-overlap with the source wording. Performs semantic search over the
-selected contract.
+overlap with the source wording.
 
 ## Approach
 
 ### Data Loading
-Loads `.txt` directly, falls back to `pdfplumber`/`PyPDF2` for PDFs;
-normalizes whitespace and unicode; chunks long contracts on paragraph
-boundaries with overlap so clauses spanning a chunk edge aren't lost.
+Loads `.txt` directly when available, falls back to `pdfplumber`/`PyPDF2`
+for PDF-only contracts; normalizes whitespace and unicode; chunks long
+contracts on paragraph boundaries with overlap so clauses spanning a chunk
+edge aren't lost.
 
 ### Clause Extraction
 A structured JSON prompt with few-shot examples (toggle off via
@@ -188,3 +194,81 @@ budget regardless of contract length.
 Local embeddings + cosine similarity, no hosted embedding API required.
 
 The pipeline processes each contract through the following stages:
+CUAD Contracts (PDF/TXT)
+│
+▼
+Load & Preprocess
+(pdfplumber/PyPDF2, normalize)
+│
+▼
+Chunk Long Documents
+(paragraph-aware, overlap)
+│
+▼
+Groq LLM (Llama 3.3 70B)
+├── Clause Extraction (few-shot JSON prompt, per chunk → merged)
+└── Contract Summarization (single-pass or map-reduce)
+│
+▼
+CSV / JSON Results
+(contract_id, summary, termination_clause,
+confidentiality_clause, liability_clause)
+│
+▼
+Semantic Search (Bonus)
+(local sentence-transformers + cosine similarity)
+
+## Design decisions
+
+- **Chunking over truncation**: contracts routinely exceed a comfortable
+  single-call context window; paragraph-aware chunking with overlap scales
+  to arbitrary contract length instead of losing late clauses.
+- **`.txt`-preferred, PDF-capable loading**: CUAD ships a clean plain-text
+  mirror of every contract, so preferring it on a full 50-contract run
+  avoids unnecessary PDF-parsing overhead — but the PDF path is fully
+  implemented and used automatically for PDF-only inputs (see **Get the
+  data** for how to explicitly exercise it).
+- **Groq backend**: `LLMClient` wraps Groq behind one `.complete()`
+  interface — fast inference keeps a 50-contract batch quick even with
+  per-chunk calls. Groq/Llama 3.3 70B was chosen over a paid API for cost
+  reasons; the interface is written to be swappable to another provider if
+  needed, though only Groq is wired up in this submission.
+- **Temperature 0** for extraction (deterministic, low hallucination) vs. a
+  small temperature for summarization (more natural prose).
+- **Local embeddings** for the search bonus, avoiding a second API key.
+- **Per-contract error isolation**: if a single contract fails (e.g. an API
+  rate limit or malformed response), the pipeline records the error against
+  that contract and continues the batch rather than aborting the whole run.
+
+## Tech Stack
+
+- Python
+- Groq API (Llama 3.3 70B)
+- Sentence Transformers (local embeddings)
+- pdfplumber / PyPDF2 (PDF text extraction)
+- pandas (CSV/JSON output)
+- scikit-learn (cosine similarity for semantic search)
+
+## Repository layout
+src/
+├── data_loader.py       # load + normalize + chunk (Task 1)
+├── clause_extraction.py # termination/confidentiality/liability (Part A)
+├── summarization.py     # 100-150 word summary, map-reduce (Part B)
+├── semantic_search.py   # bonus: embedding index + cosine search
+├── llm_client.py        # Groq wrapper w/ retries
+└── pipeline.py          # orchestration, CSV/JSON writer
+run_pipeline.py           # main CLI entry point
+search_clauses.py         # bonus: semantic search CLI
+config.py                 # central settings (model, paths, chunk sizes)
+prompts/                  # clause-extraction & summary prompt templates, few-shot examples
+sample_data/contracts/    # demo contract, no CUAD download needed
+tests/                    # unit tests (no API key required)
+output/                   # results land here (git-ignored)
+
+## Known Limitations
+
+- Extraction quality has been reviewed qualitatively (see **Sample Output**)
+  rather than scored against CUAD's ground-truth clause annotations.
+- Groq's free-tier token quota may not be sufficient to process all 50
+  contracts in one run; if exceeded, the pipeline records the error for
+  that contract and continues with the rest.
