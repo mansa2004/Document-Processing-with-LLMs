@@ -190,55 +190,17 @@ Single-pass for short contracts; map-reduce (per-chunk summary → final
 combine) for long ones, keeping every summary within the 100–150 word
 budget regardless of contract length.
 
-### Semantic Search (Bonus)
-Local embeddings + cosine similarity, no hosted embedding API required.
-
-The pipeline processes each contract through the following stages:
-CUAD Contracts (PDF/TXT)
-│
-▼
-Load & Preprocess
-(pdfplumber/PyPDF2, normalize)
-│
-▼
-Chunk Long Documents
-(paragraph-aware, overlap)
-│
-▼
-Groq LLM (Llama 3.3 70B)
-├── Clause Extraction (few-shot JSON prompt, per chunk → merged)
-└── Contract Summarization (single-pass or map-reduce)
-│
-▼
-CSV / JSON Results
-(contract_id, summary, termination_clause,
-confidentiality_clause, liability_clause)
-│
-▼
-Semantic Search (Bonus)
-(local sentence-transformers + cosine similarity)
-
-## Design decisions
-
-- **Chunking over truncation**: contracts routinely exceed a comfortable
-  single-call context window; paragraph-aware chunking with overlap scales
-  to arbitrary contract length instead of losing late clauses.
-- **`.txt`-preferred, PDF-capable loading**: CUAD ships a clean plain-text
-  mirror of every contract, so preferring it on a full 50-contract run
-  avoids unnecessary PDF-parsing overhead — but the PDF path is fully
-  implemented and used automatically for PDF-only inputs (see **Get the
-  data** for how to explicitly exercise it).
-- **Groq backend**: `LLMClient` wraps Groq behind one `.complete()`
-  interface — fast inference keeps a 50-contract batch quick even with
-  per-chunk calls. Groq/Llama 3.3 70B was chosen over a paid API for cost
-  reasons; the interface is written to be swappable to another provider if
-  needed, though only Groq is wired up in this submission.
-- **Temperature 0** for extraction (deterministic, low hallucination) vs. a
-  small temperature for summarization (more natural prose).
-- **Local embeddings** for the search bonus, avoiding a second API key.
-- **Per-contract error isolation**: if a single contract fails (e.g. an API
-  rate limit or malformed response), the pipeline records the error against
-  that contract and continues the batch rather than aborting the whole run.
+```mermaid
+flowchart TD
+    A[CUAD Contracts - PDF/TXT] --> B[Load & Preprocess<br/>pdfplumber/PyPDF2, normalize]
+    B --> C[Chunk Long Documents<br/>paragraph-aware, overlap]
+    C --> D[Groq LLM - Llama 3.3 70B]
+    D --> E[Clause Extraction<br/>few-shot JSON prompt, per chunk → merged]
+    D --> F[Contract Summarization<br/>single-pass or map-reduce]
+    E --> G[CSV / JSON Results]
+    F --> G
+    G --> H[Semantic Search - Bonus<br/>local embeddings + cosine similarity]
+```
 
 ## Tech Stack
 
